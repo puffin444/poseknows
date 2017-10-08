@@ -164,3 +164,55 @@ function buildVAE()
 
 	return vae;
 end
+
+-- Code Adapted from Vondrick et al. NIPS 2016 and Isola
+-- et al. CVPR 2017
+
+function defineD()
+  netD = nn.Sequential()
+  netD:add(nn.VolumetricConvolution(3,128, 4,4,4, 2,2,2, 1,1,1))
+  netD:add(nn.LeakyReLU(0.2, true))
+  netD:add(nn.VolumetricConvolution(128,256, 4,4,4, 2,2,2, 1,1,1))
+  netD:add(nn.VolumetricBatchNormalization(256,1e-3)):add(nn.LeakyReLU(0.2, true))
+  netD:add(nn.VolumetricConvolution(256,512, 4,4,4, 2,2,2, 1,1,1))
+  netD:add(nn.VolumetricBatchNormalization(512,1e-3)):add(nn.LeakyReLU(0.2, true))
+  netD:add(nn.VolumetricConvolution(512,1024, 4,4,4, 2,2,2, 1,1,1))
+  netD:add(nn.VolumetricBatchNormalization(1024,1e-3)):add(nn.LeakyReLU(0.2, true))
+  netD:add(nn.VolumetricConvolution(1024,2, 2,5,4, 1,1,1, 0,0,0))
+  netD:add(nn.View(2):setNumInputDims(4))
+end
+
+function defineGV_unet(input_nc, output_nc, ngf)
+  local netG = nil
+  -- input is (nc) x 256 x 256
+  local e1 = - nn.VolumetricConvolution(input_nc, ngf, 4, 4, 4, 2, 2, 2, 1, 1, 1)
+  -- input is (ngf) x 128 x 128
+  local e2 = e1 - nn.LeakyReLU(0.2, true) - nn.VolumetricConvolution(ngf, ngf * 2, 4, 4, 4, 2, 2, 2, 1, 1, 1) - nn.VolumetricBatchNormalization(ngf * 2)
+  -- input is (ngf * 2) x 64 x 64
+  local e3 = e2 - nn.LeakyReLU(0.2, true) - nn.VolumetricConvolution(ngf * 2, ngf * 4, 4, 4, 4, 2, 2, 2, 1, 1, 1) - nn.VolumetricBatchNormalization(ngf * 4)
+  -- input is (ngf * 4) x 32 x 32
+  local e4 = e3 - nn.LeakyReLU(0.2, true) - nn.VolumetricConvolution(ngf * 4, ngf * 8, 4, 4, 4, 2, 2, 2, 1, 1, 1) - nn.VolumetricBatchNormalization(ngf * 8)
+  -- input is (ngf * 8) x 16 x 16
+  local e5 = e4 - nn.LeakyReLU(0.2, true) - nn.VolumetricConvolution(ngf * 8, ngf * 8, 4, 6, 6, 2, 2, 2, 1, 1, 1) - nn.VolumetricBatchNormalization(ngf * 8)
+  -- input is (ngf * 8) x 8 x 8
+  local d3_ = e5 - nn.ReLU(true) - nn.VolumetricFullConvolution(ngf * 8, ngf * 8, 4, 7, 6, 2, 2, 2, 1, 1, 1) - nn.VolumetricBatchNormalization(ngf * 8) - nn.Dropout(0.5)
+  -- input is (ngf * 8) x 8 x 8
+  local d3 = {d3_,e4} - nn.JoinTable(2)
+  local d4_ = d3 - nn.ReLU(true) - nn.VolumetricFullConvolution(ngf * 8 * 2, ngf * 4, 4, 4, 4, 2, 2, 2, 1, 1, 1) - nn.VolumetricBatchNormalization(ngf * 4) - nn.Dropout(0.5)
+  -- input is (ngf * 8) x 16 x 16
+  local d4 = {d4_,e3} - nn.JoinTable(2)
+  local d5_ = d4 - nn.ReLU(true) - nn.VolumetricFullConvolution(ngf * 4 * 2, ngf * 2, 4, 4, 4, 2, 2, 2, 1, 1, 1) - nn.VolumetricBatchNormalization(ngf * 2)
+  -- input is (ngf * 4) x 32 x 32
+  local d5 = {d5_,e2} - nn.JoinTable(2)
+  local d6_ = d5 - nn.ReLU(true) - nn.VolumetricFullConvolution(ngf * 2 * 2, ngf, 4, 4, 4, 2, 2, 2, 1, 1, 1) - nn.VolumetricBatchNormalization(ngf)
+  -- input is (ngf * 2) x 64 x 64
+  local d6 = {d6_,e1} - nn.JoinTable(2)
+  local d7 = d6 - nn.ReLU(true) - nn.VolumetricFullConvolution(ngf * 2, output_nc, 4, 4, 4, 2, 2, 2, 1, 1, 1)
+
+  local o1 = d7 - nn.Tanh()
+
+  netG = nn.gModule({e1},{o1})
+
+  return netG
+end
+
